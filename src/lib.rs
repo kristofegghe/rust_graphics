@@ -22,7 +22,7 @@ const VERTICES: &[Vertex] = &[
 const INDICES: &[u16] = &[
     1,2,4,
     0,1,3,
-    1,2,0
+    1,3,0
 ];
 
 struct Camera {
@@ -548,7 +548,7 @@ impl State {
         }
         false
     }
-    
+
     fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_proj(&self.camera);
