@@ -22,7 +22,7 @@ const VERTICES: &[Vertex] = &[
 const INDICES: &[u16] = &[
     1,2,4,
     0,1,3,
-    1,4,3,
+    1,3,4,
 ];
 
 struct Camera {
