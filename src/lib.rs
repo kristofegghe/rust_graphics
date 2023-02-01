@@ -21,7 +21,7 @@ const VERTICES: &[Vertex] = &[
 
 const INDICES: &[u16] = &[
     1,2,4,
-    0,1,3,
+    0,2,3,
     1,3,0
 ];
 
