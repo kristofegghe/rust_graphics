@@ -5,6 +5,14 @@ struct CameraUniform {
 @group(1) @binding(0) // 1.
 var<uniform> camera: CameraUniform;
 
+
+struct Time {
+    time_since_startup: f32,
+};
+@group(1) @binding(1)
+var<uniform> time: Time;
+
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
@@ -34,8 +42,8 @@ fn vs_main(
         instance.model_matrix_3,
     );
     var out: VertexOutput;
-    out.tex_coords = model.tex_coords;
-    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
+    let z=model.position+vec3<f32>(3.0*sin(time.time_since_startup),4.0*cos(time.time_since_startup),tan(time.time_since_startup));
+    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(z,1.0);
     out.tex_coords = model.tex_coords;
     return out;
 }

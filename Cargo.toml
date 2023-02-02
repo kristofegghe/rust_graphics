@@ -14,4 +14,12 @@ pollster = "0.2"
 bytemuck = { version = "1.12", features = [ "derive" ] }
 image= {version = "0.24", default-features = false ,features = ["png", "jpeg"] }
 cgmath = "0.18"
-anyhow = "1.0" # NEW!
+anyhow = "1.0"
+tobj = { version = "3.2.1", features = ["async",]}
+ 
+
+[build-dependencies]
+anyhow = "1.0"
+fs_extra = "1.2"
+glob = "0.3"
+ 

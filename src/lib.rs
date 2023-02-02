@@ -4,32 +4,29 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 use wgpu::util::DeviceExt;
-use cgmath::prelude::*;
+use cgmath::{prelude::*, Vector3};
 mod texture;
-
-const NUM_INSTANCES_PER_ROW: u32 = 3;
+mod model;
+use model::{DrawModel, Vertex};
+mod resources;
+const NUM_INSTANCES_PER_ROW: u32 = 10;
 const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(NUM_INSTANCES_PER_ROW as f32 * 2.0, NUM_INSTANCES_PER_ROW as f32 * 2.0,NUM_INSTANCES_PER_ROW as f32 * 2.0);
-const ROTATION_SPEED: f32 = 1.2 * std::f32::consts::PI / 60.0;
+const ROTATION_SPEED: f32 = 1.0 * std::f32::consts::PI / 60.0;
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    tekscolor: [f32; 2],
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum CompareFunction {
+    Undefined = 0,
+    Never = 1,
+    Less = 2,
+    Equal = 3,
+    LessEqual = 4,
+    Greater = 5,
+    NotEqual = 6,
+    GreaterEqual = 7,
+    Always = 8,
 }
-const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.0868241, 0.49240386, 0.0], tekscolor: [1.0,0.45] }, // A
-    Vertex { position: [-0.49513406, 0.06958647, 0.0], tekscolor: [0.5, 0.0] }, // B
-    Vertex { position: [-0.21918549, -0.44939706, 0.0], tekscolor: [0.0, 0.25] }, // C
-    Vertex { position: [0.35966998, -0.3473291, 0.0], tekscolor: [0.2, 0.87] }, // D
-    Vertex { position: [0.44147372, 0.2347359, 0.0], tekscolor: [0.8, 1.0] }, // E
-];
-
-const INDICES: &[u16] = &[
-    1,2,4,
-    0,1,3,
-    1,2,0
-];
 
 struct Camera {
     eye: cgmath::Point3<f32>,
@@ -106,7 +103,26 @@ impl CameraUniform {
     }
 }
  
+// We need this for Rust to store our data correctly for the shaders
+#[repr(C)]
+// This is so we can store this in a buffer
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct TimeUniform {
+    // We can't use cgmath with bytemuck directly so we'll have
+    // to convert the Matrix4 into a 4x4 f32 array
+    time_since_startup: f32,
+}
+impl TimeUniform{
+    fn new() -> Self {
+        Self {
+            time_since_startup: 0.0,
+        }
+    }
 
+    fn update_time(&mut self) {
+        self.time_since_startup+=1.0/60.0
+    }
+}
 impl InstanceRaw {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         use std::mem;
@@ -233,28 +249,6 @@ impl CameraController {
         }
     }
 }
-// lib.rs
-impl Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                }
-            ]
-        }
-    }
-}
-
 
 struct State {
     surface: wgpu::Surface,
@@ -263,14 +257,7 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     window: Window,
-    color: wgpu::Color,
-    use_color: wgpu::Color,
-
     render_pipeline: wgpu::RenderPipeline,
-    vert_buffer:wgpu::Buffer,
-    ind_buffer:wgpu::Buffer,
-    num_indices: u32,
-    diffuse_bind_group: wgpu::BindGroup,
     camera: Camera,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
@@ -279,6 +266,12 @@ struct State {
     camera_controller:CameraController,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+    time_buffer:wgpu::Buffer,
+    time_uniform:TimeUniform,
+
+    depth_texture:texture::Texture,
+    obj_model: model::Model,
+
 }
 
 impl State {
@@ -325,9 +318,6 @@ impl State {
         use image::GenericImageView;
  
 
-        let diffuse_bytes = include_bytes!("images/jose.png");
-        let diffuse_texture =
-            texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
 
         let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -353,35 +343,13 @@ impl State {
             ],
             label: Some("texture_bind_group_layout"),
         });
-        let diffuse_bind_group = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                layout: &texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                    }
-                ],
-                label: Some("diffuse_bind_group"),
-            }
-        );
          
-        let color= wgpu::Color {
-            r: 0.1,
-            g: 0.2,
-            b: 0.3,
-            a: 1.0,
-        };
-        let use_color= wgpu::Color {
-            r: 0.1,
-            g: 0.2,
-            b: 0.3,
-            a: 1.0,
-        };
+        let obj_model = resources::load_model(
+            "cube.obj",
+            &device,
+            &queue,
+            &texture_bind_group_layout,
+        ).await.unwrap();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
@@ -390,7 +358,7 @@ impl State {
         let camera = Camera {
             // position the camera one unit up and 2 units back
             // +z is out of the screen
-            eye: (0.0, 1.0, 2.0).into(),
+            eye: (0.0, 1.0, 4.0).into(),
             // have it look at the origin
             target: (0.0, 0.0, 0.0).into(),
             // which way is "up"
@@ -398,7 +366,7 @@ impl State {
             aspect: config.width as f32 / config.height as f32,
             fovy: 45.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 10000.0,
         };     
 
         let mut camera_uniform = CameraUniform::new();
@@ -411,6 +379,8 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             }
         );
+
+        let time_uniform=TimeUniform::new();
         
         let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
@@ -423,16 +393,37 @@ impl State {
                         min_binding_size: None,
                     },
                     count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 }
             ],
             label: Some("camera_bind_group_layout"),
         });
+        let time_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::cast_slice(&[time_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }
+        );
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &camera_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: time_buffer.as_entire_binding(),
                 }
             ],
             label: Some("camera_bind_group"),
@@ -448,6 +439,8 @@ impl State {
                 push_constant_ranges: &[],
             }
         );   
+        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -456,7 +449,7 @@ impl State {
                 module: &shader,
                 entry_point: "vs_main", // 1.
                 buffers: &[
-                    Vertex::desc(), InstanceRaw::desc()
+                    model::ModelVertex::desc(), InstanceRaw::desc()
                 ], // 2.
             },
             fragment: Some(wgpu::FragmentState { // 3.
@@ -480,42 +473,32 @@ impl State {
                 // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-            depth_stencil: None, // 1.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: texture::Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less, // 1.
+                stencil: wgpu::StencilState::default(), // 2.
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1, // 2.
                 mask: !0, // 3.
                 alpha_to_coverage_enabled: false, // 4.
             },
             multiview: None, // 5.
-        });
-        let vert_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(VERTICES),
-                usage: wgpu::BufferUsages::VERTEX,
-            }
-        );
-        let ind_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(INDICES),
-                usage: wgpu::BufferUsages::INDEX,
-            }
-        );
-        let num_indices = INDICES.len() as u32;
-         
+        });         
         let camera_controller = CameraController::new(0.2);
 
         let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|y| (0..NUM_INSTANCES_PER_ROW).flat_map(move |z| {
             (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                let position = cgmath::Vector3 { x: x as f32, y: y as f32, z: z as f32 } - 1.0*INSTANCE_DISPLACEMENT;
-
+                let position = cgmath::Vector3 { x: 2.0*x  as f32 - 6.0 , y: 0.0, z:2.0*y as f32 - 6.0};
+                let rot : Vector3<f32> = cgmath::Vector3 {x: 1.0,y:0.5,z:1.0};
                 let rotation = if position.is_zero() {
                     // this is needed so an object at (0, 0, 0) won't get scaled to zero
                     // as Quaternions can effect scale if they're not created correctly
-                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
+                    cgmath::Quaternion::from_axis_angle(rot.normalize(), cgmath::Deg(0.0))
                 } else {
-                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(0.0))
                 };
 
                 Instance {
@@ -531,6 +514,7 @@ impl State {
                 usage: wgpu::BufferUsages::VERTEX| wgpu::BufferUsages::COPY_DST,
             }
         );
+        
         return Self {
             window:window,
             surface:surface,
@@ -538,13 +522,7 @@ impl State {
             queue:queue,
             config:config,
             size:size,
-            color:color,
-            use_color:use_color,
             render_pipeline:render_pipeline,
-            vert_buffer:vert_buffer,
-            num_indices:num_indices,
-            ind_buffer:ind_buffer,
-            diffuse_bind_group:diffuse_bind_group,
             camera: camera,
             camera_uniform: camera_uniform,
             camera_buffer: camera_buffer,
@@ -552,6 +530,10 @@ impl State {
             camera_controller:camera_controller,
             instances:instances,
             instance_buffer:instance_buffer,
+            time_buffer:time_buffer,
+            time_uniform:time_uniform,
+            depth_texture:depth_texture,
+            obj_model:obj_model,
         };
     }
 
@@ -563,24 +545,15 @@ impl State {
         if new_size.width>0 && new_size.height >0 {
             self.size=new_size;
             (self.config.height,self.config.width)=(new_size.height,new_size.width);
-            self.surface.configure(&self.device, &self.config)
+            self.surface.configure(&self.device, &self.config);
+            self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+
         }
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool{
 
         match event{
-            WindowEvent::CursorMoved {position, ..} =>{
-                let (r,g,b,a) = (position.x/self.size.width as f64, position.y/ self.size.height as f64 , 2.0*position.y/self.size.width as f64 , 1.0);
-                self.use_color=wgpu::Color{r:r,g:g,b:b,a:a,}
-            },
-            WindowEvent::KeyboardInput { input :
-                KeyboardInput{
-                    state: ElementState::Pressed, 
-                    virtual_keycode: Some(VirtualKeyCode::Space), ..}, .. } => {
-                self.color=self.use_color;
-    
-            },
             _ => {        self.camera_controller.process_events(event);
             }
         }
@@ -590,12 +563,15 @@ impl State {
     fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_proj(&self.camera);
+        self.time_uniform.update_time();
+        println!("{}",self.time_uniform.time_since_startup);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+        self.queue.write_buffer(&self.time_buffer, 0, bytemuck::cast_slice(&[self.time_uniform]));
 
         for instance in &mut self.instances {
-            let amount = cgmath::Quaternion::from_angle_y(cgmath::Rad(ROTATION_SPEED));
+            let _amount = cgmath::Quaternion::from_angle_z(cgmath::Rad(ROTATION_SPEED));
             let current = instance.rotation;
-            instance.rotation = amount * current;
+            instance.rotation =current;
         }
         let instance_data = self
             .instances
@@ -623,22 +599,25 @@ impl State {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.color),
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.25, g: 0.1, b: 0.75, a: 1.0 }),
                         store: true,
                     },
                 })],
-                depth_stencil_attachment: None,
-            });
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            // NEW!
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vert_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.ind_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            
-            // UPDATED!
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: None,
+                }),            });
+                render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.draw_model_instanced(
+                    &self.obj_model,
+                    0..self.instances.len() as u32,
+                    &self.camera_bind_group,
+                );
         }
     
         // submit will accept anything that implements IntoIter

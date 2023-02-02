@@ -16,7 +16,10 @@ fn main() {
     // _printloop(y);
     // _printloop(a);
     // let instances = (0..4).flat_map(|z| {(0..4).map(move |x| {println!("{},{}",x,z)})});
-    // printloop(instances.to_vec())
+    // let mut a: Vec<u32>=vec![1,2,3];
+    // _printloop(a);
+    // _printloop(a);
+
     pollster::block_on(run());
 }
 
