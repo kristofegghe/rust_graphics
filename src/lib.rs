@@ -10,7 +10,7 @@ mod model;
 use model::{DrawModel, Vertex};
 mod resources;
 const NUM_INSTANCES_PER_ROW: u32 = 10;
-const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(NUM_INSTANCES_PER_ROW as f32 * 2.0, NUM_INSTANCES_PER_ROW as f32 * 2.0,NUM_INSTANCES_PER_ROW as f32 * 2.0);
+const _INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(NUM_INSTANCES_PER_ROW as f32 * 2.0, NUM_INSTANCES_PER_ROW as f32 * 2.0,NUM_INSTANCES_PER_ROW as f32 * 2.0);
 const ROTATION_SPEED: f32 = 1.0 * std::f32::consts::PI / 60.0;
 
 #[repr(C)]
@@ -92,7 +92,6 @@ struct CameraUniform {
 
 impl CameraUniform {
     fn new() -> Self {
-        use cgmath::SquareMatrix;
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
         }
@@ -218,7 +217,6 @@ impl CameraController {
     }
 
     fn update_camera(&self, camera: &mut Camera) {
-        use cgmath::InnerSpace;
         let forward = camera.target - camera.eye;
         let forward_norm = forward.normalize();
         let forward_mag = forward.magnitude();
@@ -313,10 +311,7 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
         };
-        surface.configure(&device, &config);
-
-        use image::GenericImageView;
- 
+        surface.configure(&device, &config); 
 
 
         let texture_bind_group_layout =
@@ -489,9 +484,9 @@ impl State {
         });         
         let camera_controller = CameraController::new(0.2);
 
-        let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|y| (0..NUM_INSTANCES_PER_ROW).flat_map(move |z| {
+        let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|_y| (0..NUM_INSTANCES_PER_ROW).flat_map(move |z| {
             (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                let position = cgmath::Vector3 { x: 2.0*x  as f32 - 6.0 , y: 0.0, z:2.0*y as f32 - 6.0};
+                let position = cgmath::Vector3 { x: 2.0*x  as f32 - 6.0 , y: 0.0, z:2.0*z as f32 - 6.0};
                 let rot : Vector3<f32> = cgmath::Vector3 {x: 1.0,y:0.5,z:1.0};
                 let rotation = if position.is_zero() {
                     // this is needed so an object at (0, 0, 0) won't get scaled to zero
